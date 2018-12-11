@@ -150,7 +150,7 @@ func (bc *Blockchain) FindTransaction(ID []byte) (Transaction, error) {
 
 // FindUTXO finds all unspent transaction outputs and returns transactions with spent outputs removed
 func (bc *Blockchain) FindUTXO() map[string]TXOutputs {
-	UTXO := make(map[string]TXOutputs) //键为交易ID的hash
+	unUTXO := make(map[string]TXOutputs) //键为交易ID的hash
 	spentTXOs := make(map[string][]int) //[]int为花费的out在outs中的索引
 	bci := bc.Iterator()
 
@@ -171,11 +171,12 @@ func (bc *Blockchain) FindUTXO() map[string]TXOutputs {
 					}
 				}
 
-				outs := UTXO[txID]
+				outs := unUTXO[txID]
 				//把没有花费过的收集起来，键为交易ID，值为outputs切片集，但存放下标和原来不一致
 				//顺序一致，但其中的已花费交易被抽掉了
-				outs.Outputs = append(outs.Outputs, out)
-				UTXO[txID] = outs
+				outUTXO:=UTXO{tx.ID,outIdx,out}
+				outs.UTXOS = append(outs.UTXOS, outUTXO)
+				unUTXO[txID] = outs
 			}
 
 			if tx.IsCoinbase() == false {
@@ -192,7 +193,7 @@ func (bc *Blockchain) FindUTXO() map[string]TXOutputs {
 		}
 	}
 
-	return UTXO
+	return unUTXO
 }
 
 func (bc *Blockchain) Iterator() *BlockchainIterator {
@@ -269,7 +270,7 @@ func (bc *Blockchain) MineBlock(transactions []*Transaction) *Block {
 
 	for _, tx := range transactions {
 		// TODO: ignore transaction if it's not valid
-		if bc.VerifyTransaction(tx) != true {
+		if bc.VerifyTransaction(tx) != true { //挖之前要确定签名是否有效
 			log.Panic("ERROR: Invalid transaction")
 		}
 	}

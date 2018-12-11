@@ -30,11 +30,11 @@ func (u UTXOSet) FindSpendableOutputs(pubkeyHash []byte, amount int) (int, map[s
 			txID := hex.EncodeToString(k)
 			outs := DeserializeOutputs(v) //是txoutput中outputs结构体的方法
 
-			for outIdx, out := range outs.Outputs {
+			for _, outUTXO := range outs.UTXOS {
 				//检查是不是该公钥哈希的钱
-				if out.IsLockedWithKey(pubkeyHash) && accumulated < amount {
-					accumulated += out.Value
-					unspentOutputs[txID] = append(unspentOutputs[txID], outIdx)
+				if outUTXO.Output.IsLockedWithKey(pubkeyHash) && accumulated < amount {
+					accumulated += outUTXO.Output.Value
+					unspentOutputs[txID] = append(unspentOutputs[txID], outUTXO.Index)
 				}
 			}
 		}
@@ -50,7 +50,7 @@ func (u UTXOSet) FindSpendableOutputs(pubkeyHash []byte, amount int) (int, map[s
 
 // FindUTXO finds UTXO for a public key hash 找出所有该公钥hash的output
 func (u UTXOSet) FindUTXO(pubKeyHash []byte) []TXOutput {
-	var UTXOs []TXOutput
+	var unUTXOs []TXOutput
 	db := u.Blockchain.db
 
 	err := db.View(func(tx *bolt.Tx) error {
@@ -60,9 +60,9 @@ func (u UTXOSet) FindUTXO(pubKeyHash []byte) []TXOutput {
 		for k, v := c.First(); k != nil; k, v = c.Next() {
 			outs := DeserializeOutputs(v)
 
-			for _, out := range outs.Outputs {
-				if out.IsLockedWithKey(pubKeyHash) {
-					UTXOs = append(UTXOs, out)
+			for _, outUTXO := range outs.UTXOS {
+				if outUTXO.Output.IsLockedWithKey(pubKeyHash) {
+					unUTXOs = append(unUTXOs, outUTXO.Output)
 				}
 			}
 		}
@@ -73,7 +73,7 @@ func (u UTXOSet) FindUTXO(pubKeyHash []byte) []TXOutput {
 		log.Panic(err)
 	}
 
-	return UTXOs
+	return unUTXOs
 }
 
 // CountTransactions returns the number of transactions in the UTXO set 查找总共有多少交易
@@ -121,12 +121,12 @@ func (u UTXOSet) Reindex() {
 		log.Panic(err)
 	}
 
-	UTXO := u.Blockchain.FindUTXO() //返回每笔交易中未花费的output集合，抽掉了已花费的output
+	unUTXO := u.Blockchain.FindUTXO() //返回每笔交易中未花费的output集合，抽掉了已花费的output
 
 	err = db.Update(func(tx *bolt.Tx) error {
 		b := tx.Bucket(bucketName)
 
-		for txID, outs := range UTXO {
+		for txID, outs := range unUTXO {
 			key, err := hex.DecodeString(txID)
 			if err != nil {
 				log.Panic(err)
@@ -158,13 +158,13 @@ func (u UTXOSet) Update(block *Block) {
 					outsBytes := b.Get(vin.Txid) //获取交易输入对应的outputs
 					outs := DeserializeOutputs(outsBytes)
 
-					for outIdx, out := range outs.Outputs {
-						if outIdx != vin.Vout { //这里的Vout是否已经是utxo的outputs中的索引了？
-							updatedOuts.Outputs = append(updatedOuts.Outputs, out) //把此次输入中未花费的output收集起来
+					for _, outUTXO := range outs.UTXOS{
+						if outUTXO.Index != vin.Vout { //这里的Vout是否已经是utxo的outputs中的索引了？
+							updatedOuts.UTXOS = append(updatedOuts.UTXOS, outUTXO) //把此次输入中未花费的output收集起来
 						}
 					}
 
-					if len(updatedOuts.Outputs) == 0 { //交易中的output已全部花费，删除
+					if len(updatedOuts.UTXOS) == 0 { //交易中的output已全部花费，删除
 						err := b.Delete(vin.Txid)
 						if err != nil {
 							log.Panic(err)
@@ -180,8 +180,9 @@ func (u UTXOSet) Update(block *Block) {
 			}
 
 			newOutputs := TXOutputs{} //插入这次交易的output
-			for _, out := range tx.Vout {
-				newOutputs.Outputs = append(newOutputs.Outputs, out)
+			for outIdx, out := range tx.Vout {
+				outUTXO:=UTXO{tx.ID,outIdx,out}
+				newOutputs.UTXOS = append(newOutputs.UTXOS, outUTXO)
 			}
 
 			err := b.Put(tx.ID, newOutputs.Serialize())
